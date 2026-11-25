@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import httpx
 
 from paperclip_mcp import core
@@ -157,6 +160,101 @@ async def test_list_issues_params(client, recorder: Recorder) -> None:
     assert params["view"] == "compact"
     assert params["assigneeAgentId"] == "null"
     assert params["status"] == "backlog,todo,in_progress,in_review,blocked"
+
+
+FULL_ISSUE = {
+    "id": "d38dc64f-2753-41ef-92a5-33da4ac1854b",
+    "identifier": "ORD-1",
+    "title": "Paperclip onboarding",
+    "description": "A long description that compact mode must drop.",
+    "status": "todo",
+    "priority": "medium",
+    "assigneeAgentId": "753d2c5b-9db9-448e-93dc-84a0e7e4160f",
+    "assigneeUserId": None,
+    "projectId": "c40effec-2de4-4d99-b8cb-99d9443ac1a5",
+    "goalId": None,
+    "parentId": None,
+    "labelIds": [],
+    "updatedAt": "2026-11-03T06:10:38.876Z",
+    "blockerAttention": {"state": "none", "unresolvedBlockerCount": 0},
+    "reviewAttention": {"state": "none", "paths": []},
+    "executionRunId": None,
+    "originKind": "onboarding_first_task",
+}
+COMPACT_KEYS = {
+    "id",
+    "identifier",
+    "title",
+    "status",
+    "priority",
+    "assigneeAgentId",
+    "assigneeUserId",
+    "projectId",
+    "goalId",
+    "parentId",
+    "labelIds",
+    "updatedAt",
+}
+
+
+def _issues_responder(payload: Any):
+    def responder(request: httpx.Request) -> httpx.Response | None:
+        if request.url.path == f"/api/companies/{COMPANY}/issues":
+            return httpx.Response(200, json=payload)
+        return None
+
+    return responder
+
+
+async def _list_issues_json(client, **args: Any) -> Any:
+    result = await client.call_tool("list_issues", args, raise_on_error=True)
+    return json.loads(result.content[0].text)
+
+
+async def test_list_issues_compact_returns_only_summary_fields(client, recorder) -> None:
+    # Server ignores view=compact and returns full records; the tool must still trim them.
+    recorder.respond(_issues_responder([FULL_ISSUE, {**FULL_ISSUE, "identifier": "ORD-2"}]))
+    issues = await _list_issues_json(client, compact=True)
+    assert [i["identifier"] for i in issues] == ["ORD-1", "ORD-2"]
+    for issue in issues:
+        assert set(issue) == COMPACT_KEYS
+        assert issue["title"] == "Paperclip onboarding"
+        assert issue["status"] == "todo"
+
+
+async def test_list_issues_compact_tolerates_missing_fields(client, recorder) -> None:
+    recorder.respond(_issues_responder([{"id": "x", "title": "T", "extra": 1}]))
+    assert await _list_issues_json(client, compact=True) == [{"id": "x", "title": "T"}]
+
+
+async def test_list_issues_compact_empty_list(client, recorder) -> None:
+    recorder.respond(_issues_responder([]))
+    result = await client.call_tool("list_issues", {"compact": True}, raise_on_error=True)
+    assert not result.is_error
+    assert result.content == []  # FastMCP serialises an empty list as no content blocks
+
+
+async def test_list_issues_without_compact_returns_full_records(client, recorder) -> None:
+    recorder.respond(_issues_responder([FULL_ISSUE]))
+    assert await _list_issues_json(client) == [FULL_ISSUE]
+
+
+async def test_list_issues_compact_passes_through_non_list(client, recorder) -> None:
+    recorder.respond(_issues_responder({"items": [FULL_ISSUE]}))
+    assert await _list_issues_json(client, compact=True) == {"items": [FULL_ISSUE]}
+
+
+async def test_list_issues_compact_surfaces_server_error(client, recorder) -> None:
+    recorder.respond(
+        lambda r: (
+            httpx.Response(403, json={"error": "User does not have access to this company"})
+            if r.url.path.endswith("/issues")
+            else None
+        )
+    )
+    text = await call_error(client, "list_issues", compact=True)
+    assert "403" in text
+    assert "User does not have access to this company" in text
 
 
 async def test_list_issues_rejects_unknown_status(client) -> None:

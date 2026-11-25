@@ -29,6 +29,29 @@ from paperclip_mcp.core import (
 
 # ── CRUD ───────────────────────────────────────────────────────────────────────
 
+# Fields kept by list_issues(compact=True). Paperclip ignores `view=compact`, so the
+# projection is applied client-side.
+ISSUE_COMPACT_FIELDS: tuple[str, ...] = (
+    "id",
+    "identifier",
+    "title",
+    "status",
+    "priority",
+    "assigneeAgentId",
+    "assigneeUserId",
+    "projectId",
+    "goalId",
+    "parentId",
+    "labelIds",
+    "updatedAt",
+)
+
+
+def _compact_issue(issue: Any) -> Any:
+    if not isinstance(issue, dict):
+        return issue
+    return {k: issue[k] for k in ISSUE_COMPACT_FIELDS if k in issue}
+
 
 @mcp.tool(tags={"issues"})
 async def list_issues(
@@ -58,7 +81,8 @@ async def list_issues(
         q: Free-text search over title/description.
         limit: 1-1000 (server default 500). Default 100.
         offset: Pagination offset.
-        compact: Return the compact view (fewer fields) to save tokens.
+        compact: Return only id, identifier, title, status, priority, assignee, project,
+                 goal, parent, labelIds and updatedAt per issue, to save tokens.
         sort_field: "updated" or "id". Leave empty for priority order.
         sort_dir: "asc" or "desc".
         updated_since: ISO-8601 timestamp; only issues updated after it.
@@ -83,7 +107,10 @@ async def list_issues(
         "sortDir": sort_dir,
         "updatedSince": updated_since,
     }
-    return await get(company_path("/issues"), params)
+    issues = await get(company_path("/issues"), params)
+    if compact and isinstance(issues, list):
+        return [_compact_issue(issue) for issue in issues]
+    return issues
 
 
 @mcp.tool(tags={"issues"})
