@@ -1,0 +1,18 @@
+services:
+  paperclip-mcp:
+    build: .
+    image: paperclip-mcp:latest
+    restart: unless-stopped
+    environment:
+      PAPERCLIP_API_URL: ${PAPERCLIP_API_URL:-https://paperclip.ordinatude.dev}
+      PAPERCLIP_API_KEY: ${PAPERCLIP_API_KEY:?set a board or agent API key}
+      PAPERCLIP_COMPANY_ID: ${PAPERCLIP_COMPANY_ID:?set the Paperclip company UUID}
+      PAPERCLIP_AGENT_ID: ${PAPERCLIP_AGENT_ID:-}
+      # Clients must send "Authorization: Bearer <MCP_AUTH_TOKEN>". Generate with: openssl rand -hex 32
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set a bearer token to protect the public MCP endpoint}
+    # Dokploy routes traffic via its Traefik network using the domain config in the UI,
+    # so only expose the port inside the network. Uncomment `ports` for local testing.
+    expose:
+      - "9011"
+    # ports:
+    #   - "9011:9011"

@@ -18,6 +18,8 @@ Configuration (environment variables):
                            a board key (agent keys resolve it via GET /agents/me).
     PAPERCLIP_RUN_ID       Optional. Forwarded as X-Paperclip-Run-Id on write requests.
                            Must be a real heartbeat run id; never fabricate one.
+    MCP_AUTH_TOKEN         Optional. When set, HTTP clients must send
+                           "Authorization: Bearer <token>" to reach the MCP endpoint.
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ from typing import Any
 import httpx
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 try:
     from dotenv import load_dotenv
@@ -409,6 +414,15 @@ async def lifespan(_server: FastMCP) -> AsyncIterator[None]:
 
 # ── MCP server instance ────────────────────────────────────────────────────────
 
+
+def _build_auth() -> StaticTokenVerifier | None:
+    """Require `Authorization: Bearer $MCP_AUTH_TOKEN` on HTTP transports when set."""
+    token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
+    if not token:
+        return None
+    return StaticTokenVerifier(tokens={token: {"client_id": "paperclip-mcp", "scopes": []}})
+
+
 mcp = FastMCP(
     name="paperclip",
     instructions=(
@@ -420,4 +434,11 @@ mcp = FastMCP(
         "Errors are returned as tool errors with the server's message, code and a hint."
     ),
     lifespan=lifespan,
+    auth=_build_auth(),
 )
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def _health(_request: Request) -> JSONResponse:
+    """Unauthenticated liveness probe for container orchestrators."""
+    return JSONResponse({"status": "ok"})
